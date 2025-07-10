@@ -278,9 +278,9 @@ Broker에 있는 Topic이라는 카테고리 안에 메시지를 등록하면, S
 
 ### At Least Once
 - Ack와 Offset Commit 이라는 개념을 도입했다.
-- Ack: Broker가 메시지를 수신했을 때 Producer에게 수신 완료했다는 응답을 보내는 것 (Ack 받지 못한 경우 재전송 판단)
-- Offset: Consumer가 Broker로부터 메시지를 받을 때, 어디까지 받았는지를 관리한다.
-- Offset Commit: 전달 범위 보증 구조 (어디까지 읽었는지 확인하고 기록 update, 어디부터 재전송해야하는지 판단 기준이 됨)
+- `Ack`: Broker가 메시지를 수신했을 때 Producer에게 수신 완료했다는 응답을 보내는 것 (Ack 받지 못한 경우 재전송 판단)
+- `Offset`: Consumer가 Broker로부터 메시지를 받을 때, 어디까지 받았는지를 관리한다.
+- `Offset Commit`: 전달 범위 보증 구조 (어디까지 읽었는지 확인하고 기록 update, 어디부터 재전송해야하는지 판단 기준이 됨)
 
 
 ### Exactly Once
