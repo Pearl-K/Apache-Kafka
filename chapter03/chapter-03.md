@@ -75,7 +75,14 @@
 
 ---
 ## 3.3 카프카 구축 (Updated for Kafka 4.0 + JDK 21 기준)
-기존 책에 설명된 내용은 과거 버전이라, 비교적 최신이고 범용적으로 쓰이는 버전으로 소개한다.
+기존 책에 설명된 내용은 과거 버전 기준이라 Zookeeper와 함께 동작하는 것을 기준으로 환경을 구축하고 있다.
+
+
+그러나 최신버전에서는 Zookeeper와의 의존성을 피하고자 KRaft 컨트롤러를 사용한다. (아래 참고자료)
+
+
+[Apache Kafka의 새로운 협의 프로토콜인 KRaft](https://devocean.sk.com/blog/techBoardDetail.do?ID=165737&boardType=techBlog)
+
 
 ### 3.3.1 OS 설치 (공통)
 
@@ -123,7 +130,7 @@
 Kafka만 직접 사용할 경우 생략 가능하다. 
 
 
-Confluent Platform (Schema Registry, Control Center 등 포함)을 사용할 경우:
+Confluent Platform (Schema Registry, Control Center 등 포함)을 사용할 경우, 레포지토리 등록 필요:
 
 ```bash
 wget -qO - https://packages.confluent.io/gpg.key | sudo apt-key add -
@@ -131,13 +138,13 @@ sudo add-apt-repository "deb [arch=amd64] https://packages.confluent.io/platform
 sudo apt update
 ```
 
-* Confluent 8.0은 Kafka 4.0 기반, KRaft 모드 기본 
+* Confluent 8.0은 Kafka 4.0 기반으로, KRaft 모드 기본이다. 
 
 
 
 ### 3.3.4 카프카 설치 (공통)
 
-#### A. 아파치 Kafka (ZooKeeper 없이 KRaft 모드 권장)
+#### A. 아파치 Kafka (ZooKeeper 없이 KRaft 모드로)
 
 * Kafka 공식 다운로드 페이지에서 **Kafka 4.0 (Scala 2.13)** 선택
 * 다운로드 예시:
@@ -233,18 +240,139 @@ sudo apt install confluent-community-2.13
 
 ---
 ## 3.4 카프카 실행과 동작 확인
+
 ### 3.4.1 카프카 클러스터 실행
 
+1. **Storage 포맷(최초 1회만)**
 
+   ```bash
+   # 각 노드에서 UUID 생성 및 포맷
+   UUID=$(bin/kafka-storage.sh random-uuid)
+   bin/kafka-storage.sh format -t $UUID -c config/server.properties
+   ```
+2. **브로커 시작**
+
+   ```bash
+   # foreground 실행 (테스트용)
+   bin/kafka-server-start.sh config/server.properties
+
+   # daemon 백그라운드 실행 (운영용 예시)
+   nohup bin/kafka-server-start.sh config/server.properties \
+     > /var/log/kafka/server.log 2>&1 &
+   ```
+3. **Systemd 유닛 사용 예시**
+   `/etc/systemd/system/kafka.service`:
+
+   ```ini
+   [Unit]
+   Description=Apache Kafka Broker
+   After=network.target
+
+   [Service]
+   User=kafka
+   ExecStart=/opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+   ExecStop=/opt/kafka/bin/kafka-server-stop.sh
+   Restart=on-failure
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   ```bash
+   # 유닛 등록 및 시작
+   sudo systemctl daemon-reload
+   sudo systemctl enable kafka
+   sudo systemctl start kafka
+   ```
+
+---
 
 ### 3.4.2 카프카 클러스터 동작 확인
 
+1. **브로커 API 버전 확인**
+   클러스터의 각 브로커가 정상적으로 올라왔는지 점검:
 
+   ```bash
+   bin/kafka-broker-api-versions.sh --bootstrap-server host1:9092,host2:9092
+   ```
+2. **토픽 생성·조회 테스트**
+
+   ```bash
+   # test 토픽 생성 (replication-factor=3, partitions=1)
+   bin/kafka-topics.sh \
+     --create \
+     --bootstrap-server host1:9092 \
+     --replication-factor 3 \
+     --partitions 1 \
+     --topic test-topic
+
+   # 토픽 목록 확인
+   bin/kafka-topics.sh --list --bootstrap-server host1:9092
+
+   # 토픽 상세 정보 확인
+   bin/kafka-topics.sh \
+     --describe \
+     --bootstrap-server host1:9092 \
+     --topic test-topic
+   ```
+3. **메시지 송수신 테스트**
+
+   * **Producer**:
+
+     ```bash
+     bin/kafka-console-producer.sh \
+       --bootstrap-server host1:9092 \
+       --topic test-topic
+     # > hello kafka
+     ```
+   * **Consumer**:
+
+     ```bash
+     bin/kafka-console-consumer.sh \
+       --bootstrap-server host1:9092 \
+       --topic test-topic \
+       --from-beginning \
+       --timeout-ms 10000
+     # hello kafka
+     ```
+4. **Controller 리더 확인**
+   Controller 역할을 수행 중인 브로커를 확인:
+
+   ```bash
+   bin/kafka-shell.sh --bootstrap-server host1:9092 \
+     --command-config config/admin.properties \
+     --describe-quorum
+   ```
+
+   *(Confluent Control Center 사용 시 UI에서 클러스터 상태도 조회 가능)*
+
+---
 
 ### 3.4.3 카프카 클러스터 종료
+
+1. **스크립트를 통한 정상 종료**
+
+   ```bash
+   # 포그라운드로 기동했다면 Ctrl+C
+   # 데몬으로 기동했다면:
+   bin/kafka-server-stop.sh
+   ```
+2. **Systemd 유닛 사용 시**
+
+   ```bash
+   sudo systemctl stop kafka
+   ```
+3. **종료 확인**
+
+   ```bash
+   ps aux | grep kafka
+   # kafka-server-start.sh 프로세스가 더 이상 보이지 않아야 정상 종료
+   ```
 
 
 
 ---
 ## 3.5 정리
-컨플루언트 플랫폼을 이용한 카프카 설치 방법과 동작 확인 방법을 알아보았다. 다음 장에서는 이렇게 구축한 환경에서 카프카를 어떻게 사용하는지 살펴보겠다.
+컨플루언트 플랫폼을 이용한 카프카 설치 방법(이전 버전)과 Kafka 4.0의 동작 차이가 있었다.
+
+이 중, 4.0 버전으로 구축하고 동작을 확인했다. 다음 장에서는 이렇게 구축한 환경에서 카프카를 어떻게 사용하는지 살펴보겠다.
