@@ -39,3 +39,27 @@ PS C:\kafka\kafka_2.13-4.0.0> .\bin\windows\kafka-topics.bat --list --bootstrap-
 __consumer_offsets
 test-topic
 ```
+
+
+아래는 카프카 클러스터 설정을 위한 단계이다.
+
+
+```powershell
+# 공통
+process.roles=broker,controller
+log.dirs=/tmp/kraft-logs-node-1
+
+# 노드별 고유 설정
+node.id=1
+
+# voter 전체를 명시
+controller.quorum.voters=1@localhost:9093,2@localhost:9095,3@localhost:9097
+
+# listener 포트도 노드마다 다르게
+listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+advertised.listeners=PLAINTEXT://localhost:9092,CONTROLLER://localhost:9093
+
+controller.listener.names=CONTROLLER
+listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+
+```
