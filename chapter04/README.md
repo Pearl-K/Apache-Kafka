@@ -88,26 +88,37 @@ spring:
 ```java
 package com.example.kafkapractice.domain;
 
+import lombok.Getter;
+
+import java.time.LocalDateTime;
+
+@Getter
 public class OrderEvent {
     private String orderId;
     private String status;
-    private long timestamp;
+    private LocalDateTime timestamp;
 
-    public OrderEvent() {}
+    public static OrderEvent create(
+            String orderId,
+            String status,
+            LocalDateTime timestamp
+    ) {
+        return new OrderEvent(
+                orderId,
+                status, 
+                timestamp
+        );
+    }
 
-    public OrderEvent(String orderId, String status, long timestamp) {
+    private OrderEvent(
+            String orderId,
+            String status,
+            LocalDateTime timestamp
+    ) {
         this.orderId = orderId;
         this.status = status;
         this.timestamp = timestamp;
     }
-
-    // getters / setters
-    public String getOrderId() { return orderId; }
-    public void setOrderId(String orderId) { this.orderId = orderId; }
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
-    public long getTimestamp() { return timestamp; }
-    public void setTimestamp(long timestamp) { this.timestamp = timestamp; }
 }
 ```
 
