@@ -86,38 +86,17 @@ spring:
 ### 1. 메시지 모델 (`OrderEvent`) 예시
 
 ```java
-package com.example.kafkapractice.domain;
-
-import lombok.Getter;
-
-import java.time.LocalDateTime;
-
-@Getter
-public class OrderEvent {
-    private String orderId;
-    private String status;
-    private LocalDateTime timestamp;
-
-    public static OrderEvent create(
+public record OrderEvent(
+        String orderId,
+        String status,
+        LocalDateTime timestamp
+) {
+    public static OrderEvent of(
             String orderId,
             String status,
             LocalDateTime timestamp
     ) {
-        return new OrderEvent(
-                orderId,
-                status, 
-                timestamp
-        );
-    }
-
-    private OrderEvent(
-            String orderId,
-            String status,
-            LocalDateTime timestamp
-    ) {
-        this.orderId = orderId;
-        this.status = status;
-        this.timestamp = timestamp;
+        return new OrderEvent(orderId, status, timestamp);
     }
 }
 ```
@@ -125,19 +104,6 @@ public class OrderEvent {
 ### 2. Producer 설정 (필요하면 명시적 설정)
 
 ```java
-package com.example.kafkapractice.config;
-
-import com.example.kafkapractice.domain.OrderEvent;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.common.serialization.StringSerializer;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.core.*;
-
-import org.springframework.kafka.support.serializer.JsonSerializer;
-
-import java.util.HashMap;
-import java.util.Map;
 
 @Configuration
 public class KafkaProducerConfig {
@@ -163,54 +129,43 @@ public class KafkaProducerConfig {
 ### 3. Producer 서비스
 
 ```java
-package com.example.kafkapractice.producer;
-
-import com.example.kafkapractice.domain.OrderEvent;
-import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.stereotype.Service;
-
 @Service
+@RequiredArgsConstructor
 public class OrderProducer {
 
     private final KafkaTemplate<String, OrderEvent> kafkaTemplate;
     private static final String TOPIC = "orders";
 
-    public OrderProducer(KafkaTemplate<String, OrderEvent> kafkaTemplate) {
-        this.kafkaTemplate = kafkaTemplate;
-    }
-
     public void send(OrderEvent event) {
-        kafkaTemplate.send(TOPIC, event.getOrderId(), event)
-            .addCallback(
-                success -> System.out.println("Sent: " + event.getOrderId()),
-                failure -> System.err.println("Failed send: " + failure.getMessage())
-            );
+        kafkaTemplate.send(TOPIC, event.orderId(), event)
+                .whenComplete((result, ex) -> {
+                    if (ex != null) {
+                        System.err.println("Failed send: " + event.orderId() + " – " + ex.getMessage());
+                        ex.printStackTrace();
+                    } else {
+                        System.out.println("Sent: " + event.orderId());
+                    }
+                });
     }
 }
 ```
 
-### 4. 실행용 Runner (애플리케이션 시작 시 한 번 보내보기)
+### 4. 실행용 Runner (애플리케이션 시작 후 테스트)
 
 ```java
-package com.example.kafkapractice;
-
-import com.example.kafkapractice.domain.OrderEvent;
-import com.example.kafkapractice.producer.OrderProducer;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.stereotype.Component;
-
 @Component
+@RequiredArgsConstructor
 public class ProducerRunner implements CommandLineRunner {
 
     private final OrderProducer producer;
 
-    public ProducerRunner(OrderProducer producer) {
-        this.producer = producer;
-    }
-
     @Override
     public void run(String... args) {
-        OrderEvent event = new OrderEvent("order-123", "CREATED", System.currentTimeMillis());
+        OrderEvent event = OrderEvent.of(
+                "order-123",
+                "CREATED",
+                LocalDateTime.now()
+        );
         producer.send(event);
     }
 }
@@ -223,21 +178,6 @@ public class ProducerRunner implements CommandLineRunner {
 ### 1. Consumer 설정 (수동 커밋)
 
 ```java
-package com.example.kafkapractice.config;
-
-import com.example.kafkapractice.domain.OrderEvent;
-import org.apache.kafka.clients.consumer.ConsumerConfig;
-import org.apache.kafka.common.serialization.StringDeserializer;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
-import org.springframework.kafka.core.*;
-import org.springframework.kafka.listener.ContainerProperties;
-import org.springframework.kafka.support.serializer.JsonDeserializer;
-
-import java.util.HashMap;
-import java.util.Map;
-
 @Configuration
 public class KafkaConsumerConfig {
 
@@ -269,25 +209,18 @@ public class KafkaConsumerConfig {
 ### 2. Consumer 리스너
 
 ```java
-package com.example.kafkapractice.consumer;
-
-import com.example.kafkapractice.domain.OrderEvent;
-import org.springframework.kafka.annotation.KafkaListener;
-import org.springframework.kafka.support.Acknowledgment;
-import org.springframework.stereotype.Service;
-
 @Service
 public class OrderConsumer {
 
     @KafkaListener(topics = "orders", containerFactory = "kafkaListenerContainerFactory")
     public void listen(OrderEvent event, Acknowledgment ack) {
         try {
-            System.out.println("Consumed: " + event.getOrderId() + " status=" + event.getStatus());
-            // 처리 끝나면 수동 커밋
-            ack.acknowledge();
+            System.out.println("Consumed: " + event.orderId() + " status=" + event.status());
+            ack.acknowledge(); // 수동 커밋
         } catch (Exception e) {
             System.err.println("Processing failed: " + e.getMessage());
-            // 커밋하지 않아서 재처리 가능 (정책에 따라 DLQ 등이 필요)
+
+            // ... retry 로직 필요
         }
     }
 }
@@ -297,17 +230,67 @@ public class OrderConsumer {
 
 ## 4.6 핵심 개념 요약 (Producer / Consumer)
 
-* **Producer**
+좋습니다. 더 정확하고 실무에 가까운 요약으로 정리하면 다음과 같습니다.
 
-  * `KafkaTemplate`은 내부적으로 `KafkaProducer`를 감싼 추상.
-  * 신뢰성: `acks=all`, `retries`, callback으로 성공/실패 감지.
-  * 직렬화: `JsonSerializer`로 객체 → JSON.
+---
 
-* **Consumer**
+## **Producer**
 
-  * `@KafkaListener` + `ConcurrentKafkaListenerContainerFactory`로 감싼 `KafkaConsumer`.
-  * 오프셋: `enable-auto-commit=false` + `Acknowledgment` 수동 커밋 → 정확한 처리 제어.
-  * 역직렬화: `JsonDeserializer` + `trusted.packages` 세팅 필수.
-  * 오류 시 재시도 / DLQ 전략을 별도 구현 가능.
-  * 병렬 소비: `factory.setConcurrency(n)`으로 증가시킬 수 있음.
+* **KafkaTemplate / KafkaProducer 추상화**
+  `KafkaTemplate`은 실제 Kafka 클라이언트인 `KafkaProducer`를 감싼 스프링 추상으로, 메시지 전송을 간결하게 처리하고 구성 가능한 콜백/리스너를 붙일 수 있게 한다.
+
+* **신뢰성 설정**
+
+  * `acks=all`: 모든 ISR(in-sync replica)으로부터 확인을 받아야 전송을 성공으로 간주하므로 데이터 손실 위험을 줄인다.
+  * `retries`: 일시적 실패 시 재전송 시도. 재전송 시 중복 전송 가능성 때문에 `enable.idempotence=true`를 함께 쓰면 동일한 키/파티션에 대해 중복 없이 전송 보장이 강화된다 (exactly-once semantics에 가까워짐).
+  * **Idempotence**: 프로듀서 측에서 중복 전송을 방지해 같은 메시지가 두 번 처리되는 것을 막는다.
+  * **타임아웃 / 배치 / 지연**: `linger.ms`, `batch.size` 등으로 전송 효율과 지연 사이의 트레이드오프를 조절할 수 있다.
+
+* **직렬화**
+
+  * 키와 값은 각각 Serializer를 통해 바이트로 변환된다. 이 예제에서는 `String` 키는 `StringSerializer`, 값 객체는 `JsonSerializer`를 사용해 Jackson 기반 JSON으로 직렬화된다.
+  * 복잡한 도메인 객체(예: record 또는 DTO)는 Jackson이 역직렬화할 수 있는 구조여야 하며, 타임타입(`LocalDateTime` 등)은 직렬화 포맷/모듈 등록이 올바른지 확인해야 한다.
+
+* **전송 결과 처리**
+
+  * 비동기 전송 결과는 `CompletableFuture` 또는 `ListenableFuture` API로 받는다. 성공/실패 콜백을 붙여 로깅, 재시도 정책, 알림 등을 구현한다.
+    예: `whenComplete(...)`으로 성공과 실패를 분기 처리하거나, 전역적으로 `ProducerListener`를 설정해 모든 전송 결과를 관찰할 수 있다.
+
+---
+
+## **Consumer**
+
+* **리스너 및 컨테이너 설정**
+
+  * `@KafkaListener`와 `ConcurrentKafkaListenerContainerFactory`가 `KafkaConsumer`를 감싸며, 병렬 처리(스레드 수)를 `factory.setConcurrency(n)`으로 조정할 수 있다.
+  * 컨슈머 그룹을 통해 같은 토픽을 여러 인스턴스가 나눠서 파티션 단위로 소비하여 확장성과 부하 분산을 확보한다.
+
+* **오프셋 관리**
+
+  * `enable.auto.commit=false`로 자동 커밋을 끄고, `Acknowledgment`를 통해 **명시적(수동) 커밋**을 제어한다.
+
+    * 처리 로직이 완료된 시점에 `ack.acknowledge()`를 호출해야 해당 오프셋이 커밋되어 “정상 처리된 메시지”로 인정된다.
+    * 이 방식은 **적어도 한 번(at-least-once)** 처리 보장을 제공하며, 실패 시 재처리 가능성을 남긴다.
+    * \*\*정확히 한 번(exactly-once)\*\*이 필요하면 외부 상태와의 조정이나 트랜잭션 설계가 추가로 필요하다.
+
+* **역직렬화**
+
+  * 메시지 키/값은 각각 Deserializer를 통해 객체로 복원된다. `JsonDeserializer`를 쓰는 경우, 역직렬화 대상 클래스에 대해 신뢰할 패키지를 명시하는 `spring.json.trusted.packages` 설정이 필요하다.
+  * 역직렬화 오류(포맷 깨짐, 예상 타입 불일치 등)는 처리 흐름을 깨트릴 수 있으므로 별도 예외 처리나 error handler를 둬야 한다.
+
+* **오류 처리 전략**
+
+  * 단순한 `try/catch`만으로는 poison message(계속 실패하는 메시지)나 무한 재시도가 발생할 수 있다.
+  * 실무에서는 다음 같은 전략을 추가로 고려한다:
+
+    * **재시도(backoff)**: 실패 시 일정한 지연을 두고 재시도.
+    * **Dead Letter Queue(DLQ)**: 여러 번 실패한 메시지를 별도 “죽은 메시지” 토픽으로 보내고, 나중에 분석/재처리.
+    * **정책 기반 실패 분리**: 특정 예외는 재시도, 특정 예외는 바로 DLQ 전송 등.
+
+---
+
+## **요약된 처리 보장 비교**
+
+* **Producer 측**: `acks=all` + `retries` + `idempotence` 조합은 중복과 손실을 줄여 강한 전송 신뢰성을 준다.
+* **Consumer 측**: 수동 커밋을 쓰면 처리 완료를 확실히 한 뒤 오프셋을 옮겨 “정확한 처리 제어”가 가능하지만, 실패하면 재처리될 수 있다는 점을 설계에 반영해야 한다.
 
